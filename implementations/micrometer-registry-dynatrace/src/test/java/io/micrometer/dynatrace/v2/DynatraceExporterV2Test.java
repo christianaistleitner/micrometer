@@ -29,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -715,10 +716,10 @@ class DynatraceExporterV2Test {
         Gauge.builder("my.gauge", () -> 1.23).description("my.description").baseUnit("Liters").register(meterRegistry);
         exporter.export(meterRegistry.getMeters());
 
-        verify(builder).withPlainText(assertArg(body -> {
+        verify(builder).withContent(eq("text/plain"), assertArg((byte[] body) -> {
             // get the data set to the request and split it into lines on the newline
             // char.
-            assertThat(body.split("\n")).containsExactly(
+            assertThat(new String(body, StandardCharsets.UTF_8).split("\n")).containsExactly(
                     "my.gauge,dt.metrics.source=micrometer gauge,1.23 " + clock.wallTime(),
                     "#my.gauge gauge dt.meta.description=my.description,dt.meta.unit=Liters");
         }));
@@ -737,8 +738,8 @@ class DynatraceExporterV2Test {
         clock.add(config.step());
         exporter.export(meterRegistry.getMeters());
 
-        verify(builder).withPlainText(assertArg(body -> {
-            assertThat(body.split("\n")).containsExactly(
+        verify(builder).withContent(eq("text/plain"), assertArg((byte[] body) -> {
+            assertThat(new String(body, StandardCharsets.UTF_8).split("\n")).containsExactly(
                     "my.count,dt.metrics.source=micrometer count,delta=5.234 " + clock.wallTime(),
                     "#my.count count dt.meta.description=count\\ description,dt.meta.unit=Bytes");
         }));
@@ -755,7 +756,7 @@ class DynatraceExporterV2Test {
         Gauge.builder("gauge.du", () -> 40.00).description("temperature").baseUnit("kelvin").register(meterRegistry);
         exporter.export(meterRegistry.getMeters());
 
-        verify(builder).withPlainText(assertArg(body -> assertThat(body.split("\n")).containsExactlyInAnyOrder(
+        verify(builder).withContent(eq("text/plain"), assertArg((byte[] body) -> assertThat(new String(body, StandardCharsets.UTF_8).split("\n")).containsExactlyInAnyOrder(
                 "gauge,dt.metrics.source=micrometer gauge,10 " + clock.wallTime(),
                 // no metadata since no unit nor description
                 "gauge.d,dt.metrics.source=micrometer gauge,20 " + clock.wallTime(),
@@ -784,7 +785,7 @@ class DynatraceExporterV2Test {
         exporter.export(meterRegistry.getMeters());
         sample.stop();
 
-        verify(builder).withPlainText(assertArg(body -> assertThat(body.split("\n")).containsExactlyInAnyOrder(
+        verify(builder).withContent(eq("text/plain"), assertArg((byte[] body) -> assertThat(new String(body, StandardCharsets.UTF_8).split("\n")).containsExactlyInAnyOrder(
                 "test.timer,dt.metrics.source=micrometer gauge,min=12,max=12,sum=12,count=1 " + clock.wallTime(),
                 "#test.timer gauge dt.meta.unit=ms",
                 "test.summary,dt.metrics.source=micrometer gauge,min=42,max=42,sum=42,count=1 " + clock.wallTime(),
@@ -833,7 +834,7 @@ class DynatraceExporterV2Test {
         clock.add(config.step().plus(Duration.ofSeconds(2)));
         exporter.export(meterRegistry.getMeters());
 
-        verify(builder).withPlainText(assertArg(body -> assertThat(body.split("\n")).containsExactlyInAnyOrder(
+        verify(builder).withContent(eq("text/plain"), assertArg((byte[] body) -> assertThat(new String(body, StandardCharsets.UTF_8).split("\n")).containsExactlyInAnyOrder(
                 "test.tu.nanos,dt.metrics.source=micrometer count,delta=1 " + clock.wallTime(),
                 "#test.tu.nanos count dt.meta.unit=ns",
                 "test.nanoseconds,dt.metrics.source=micrometer count,delta=2 " + clock.wallTime(),
@@ -930,13 +931,13 @@ class DynatraceExporterV2Test {
         clock.add(config.step());
         exporter.export(meterRegistry.getMeters());
 
-        ArgumentCaptor<String> firstReqCap = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> secondReqCap = ArgumentCaptor.forClass(String.class);
-        verify(firstReq).withPlainText(firstReqCap.capture());
-        verify(secondReq).withPlainText(secondReqCap.capture());
+        ArgumentCaptor<byte[]> firstReqCap = ArgumentCaptor.forClass(byte[].class);
+        ArgumentCaptor<byte[]> secondReqCap = ArgumentCaptor.forClass(byte[].class);
+        verify(firstReq).withContent(eq("text/plain"), firstReqCap.capture());
+        verify(secondReq).withContent(eq("text/plain"), secondReqCap.capture());
 
-        String[] firstReqLines = firstReqCap.getValue().split("\n");
-        String[] secondReqLines = secondReqCap.getValue().split("\n");
+        String[] firstReqLines = new String(firstReqCap.getValue(), StandardCharsets.UTF_8).split("\n");
+        String[] secondReqLines = new String(secondReqCap.getValue(), StandardCharsets.UTF_8).split("\n");
 
         // the first request will contain the metric lines
         assertThat(firstReqLines).containsExactly(
@@ -971,8 +972,8 @@ class DynatraceExporterV2Test {
         clock.add(config.step());
         exporter.export(meterRegistry.getMeters());
 
-        verify(builder).withPlainText(assertArg(body -> {
-            assertThat(body.split("\n")).containsExactly(
+        verify(builder).withContent(eq("text/plain"), assertArg((byte[] body) -> {
+            assertThat(new String(body, StandardCharsets.UTF_8).split("\n")).containsExactly(
                     "my.count,dt.metrics.source=micrometer,counter-number=counter1 count,delta=5.234 "
                             + clock.wallTime(),
                     "my.count,dt.metrics.source=micrometer,counter-number=counter2 count,delta=2.345 "
@@ -1012,9 +1013,9 @@ class DynatraceExporterV2Test {
             .asList("my.count count,delta=5.234 " + clock.wallTime(), "my.count count,delta=2.345 " + clock.wallTime())
             .iterator();
 
-        ArgumentCaptor<String> stringArgumentCaptor = ArgumentCaptor.forClass(String.class);
-        verify(builder).withPlainText(stringArgumentCaptor.capture());
-        List<String> lines = Arrays.asList(stringArgumentCaptor.getValue().split("\n"));
+        ArgumentCaptor<byte[]> contentArgumentCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(builder).withContent(eq("text/plain"), contentArgumentCaptor.capture());
+        String[] lines = new String(contentArgumentCaptor.getValue(), StandardCharsets.UTF_8).split("\n");
 
         assertThat(lines).hasSize(2).allSatisfy(line -> {
             assertThat(extractBase(line)).isEqualTo(expectedBases.next());
@@ -1073,9 +1074,9 @@ class DynatraceExporterV2Test {
         clock.add(config.step());
         exporter.export(meterRegistry.getMeters());
 
-        ArgumentCaptor<String> stringArgumentCaptor = ArgumentCaptor.forClass(String.class);
-        verify(builder).withPlainText(stringArgumentCaptor.capture());
-        List<String> lines = Arrays.asList(stringArgumentCaptor.getValue().split("\n"));
+        ArgumentCaptor<byte[]> contentArgumentCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(builder).withContent(eq("text/plain"), contentArgumentCaptor.capture());
+        String[] lines = new String(contentArgumentCaptor.getValue(), StandardCharsets.UTF_8).split("\n");
 
         assertThat(lines).hasSize(1)
             .containsExactly("my.count,dt.metrics.source=micrometer count,delta=5.234 " + clock.wallTime());

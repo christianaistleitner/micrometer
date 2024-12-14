@@ -34,8 +34,10 @@ import io.micrometer.dynatrace.DynatraceConfig;
 import io.micrometer.dynatrace.types.DynatraceSummarySnapshot;
 import io.micrometer.dynatrace.types.DynatraceSummarySnapshotSupport;
 
+import java.io.ByteArrayOutputStream;
 import java.net.MalformedURLException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -156,8 +158,8 @@ public final class DynatraceExporterV2 extends AbstractDynatraceExporter {
             seenMetadata = new HashMap<>();
         }
 
-        int partitionSize = Math.min(config.batchSize(), DynatraceMetricApiConstants.getPayloadLinesLimit());
-        List<String> batch = new ArrayList<>(partitionSize);
+        int linesLimit = Math.min(config.batchSize(), DynatraceMetricApiConstants.getPayloadLinesLimit());
+        LineBuffer buffer = new LineBuffer();
 
         for (Meter meter : meters) {
             // Lines that are too long to be ingested into Dynatrace, as well as lines
@@ -166,8 +168,11 @@ public final class DynatraceExporterV2 extends AbstractDynatraceExporter {
             Stream<String> metricLines = toMetricLines(meter, seenMetadata);
 
             metricLines.forEach(line -> {
-                batch.add(line);
-                sendBatchIfFull(batch, partitionSize);
+                buffer.add(line);
+                if (buffer.getLineCount() == linesLimit || buffer.getByteSize() > 900_000) {
+                    send(buffer.getBytes(), buffer.getLineCount());
+                    buffer.reset();
+                }
             });
         }
 
@@ -176,22 +181,18 @@ public final class DynatraceExporterV2 extends AbstractDynatraceExporter {
         if (seenMetadata != null) {
             seenMetadata.values().forEach(line -> {
                 if (line != null) {
-                    batch.add(line);
-                    sendBatchIfFull(batch, partitionSize);
+                    buffer.add(line);
+                    if (buffer.getLineCount() == linesLimit || buffer.getByteSize() > 900_000) {
+                        send(buffer.getBytes(), buffer.getLineCount());
+                        buffer.reset();
+                    }
                 }
             });
         }
 
         // push remaining lines if any.
-        if (!batch.isEmpty()) {
-            send(batch);
-        }
-    }
-
-    private void sendBatchIfFull(List<String> batch, int partitionSize) {
-        if (batch.size() == partitionSize) {
-            send(batch);
-            batch.clear();
+        if (buffer.getByteSize() > 0) {
+            send(buffer.getBytes(), buffer.getLineCount());
         }
     }
 
@@ -409,26 +410,24 @@ public final class DynatraceExporterV2 extends AbstractDynatraceExporter {
         return StreamSupport.stream(iterable.spliterator(), false);
     }
 
-    private void send(List<String> metricLines) {
+    private void send(byte[] body, int lineCount) {
         String endpoint = config.uri();
         if (!isValidEndpoint(endpoint)) {
             logger.warn("Invalid endpoint, skipping export... ({})", endpoint);
             return;
         }
-        try {
-            int lineCount = metricLines.size();
+        if (logger.isDebugEnabled()) {
             logger.debug("Sending {} lines to {}", lineCount, endpoint);
-
-            String body = String.join("\n", metricLines);
-            logger.debug("Sending lines:\n{}", body);
-
+            logger.debug("Sending lines:\n{}", new String(body, StandardCharsets.UTF_8));
+        }
+        try {
             HttpSender.Request.Builder requestBuilder = httpClient.post(endpoint);
             if (!shouldIgnoreToken(config)) {
                 requestBuilder.withHeader("Authorization", "Api-Token " + config.apiToken());
             }
 
             requestBuilder.withHeader("User-Agent", "micrometer")
-                .withPlainText(body)
+                .withContent("text/plain", body)
                 .send()
                 .onSuccess(response -> handleSuccess(lineCount, response))
                 .onError(response -> {
@@ -592,4 +591,37 @@ public final class DynatraceExporterV2 extends AbstractDynatraceExporter {
         return Collections.unmodifiableMap(mapping);
     }
 
+    private static class LineBuffer {
+
+        private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream(1024);
+
+        private int lineCount = 0;
+
+        public void add(String line) {
+            byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
+            if (lineCount > 0) {
+                outputStream.write('\n');
+            }
+            outputStream.write(bytes, 0, bytes.length);
+            lineCount++;
+        }
+
+
+        public int getLineCount() {
+            return lineCount;
+        }
+
+        public int getByteSize() {
+            return outputStream.size();
+        }
+
+        public byte[] getBytes() {
+            return outputStream.toByteArray();
+        }
+
+        public void reset() {
+            outputStream.reset();
+            lineCount = 0;
+        }
+    }
 }
